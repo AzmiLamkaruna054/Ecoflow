@@ -28,14 +28,13 @@ class _LandingPageState extends State<LandingPage> {
                         width: 190, height: 190),
                   ),
                   SizedBox(height: 20),
-                  Center(
-                    child: Text(
-                      'Welcome to EcoFlow, your sustainable lifestyle companion!',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 18,
-                      ),
+                  Text(
+                    'Welcome to EcoFlow, your sustainable lifestyle companion!',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 18,
                     ),
+                    textAlign: TextAlign.center,
                   ),
                   SizedBox(height: 20),
                 ],
@@ -60,7 +59,7 @@ class _LandingPageState extends State<LandingPage> {
                         ),
                       )
                     : Container(),
-                SizedBox(height: 20),
+                SizedBox(height: 35),
               ],
             ),
           ],
