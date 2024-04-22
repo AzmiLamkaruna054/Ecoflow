@@ -1,5 +1,4 @@
 import 'package:ecoflow/landingPage.dart';
-import 'package:ecoflow/main_screen.dart';
 import 'package:flutter/material.dart';
 import 'dart:async';
 
