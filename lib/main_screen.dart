@@ -1,3 +1,6 @@
+import 'dart:ffi';
+
+import 'package:firebase_database/firebase_database.dart';
 import 'package:flutter/material.dart';
 import 'notifikasi.dart';
 import 'dart:async';
@@ -6,8 +9,38 @@ import 'package:intl/intl.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:d_info/d_info.dart';
 import 'package:sn_progress_dialog/sn_progress_dialog.dart';
+import 'package:firebase_core/firebase_core.dart';
 
-class MainScreen extends StatelessWidget {
+class MainScreen extends StatefulWidget {
+  @override
+  _MainScreenState createState() => _MainScreenState();
+}
+
+class _MainScreenState extends State<MainScreen> {
+  bool _isFirebaseInitialized = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // Panggil fungsi untuk memeriksa koneksi Firebase saat widget diinisialisasi
+    _checkFirebaseConnection();
+  }
+
+  Future<void> _checkFirebaseConnection() async {
+    try {
+      // Inisialisasi Firebase
+      await Firebase.initializeApp();
+      // Jika berhasil terhubung, set _isFirebaseInitialized menjadi true
+      setState(() {
+        _isFirebaseInitialized = true;
+      });
+      print('Firebase connected successfully');
+    } catch (e) {
+      // Jika gagal terhubung, cetak pesan kesalahan
+      print('Error connecting to Firebase: $e');
+    }
+  }
+
   void _goToNotificationsPage(BuildContext context) {
     Navigator.push(
       context,
@@ -54,6 +87,20 @@ class MainScreen extends StatelessWidget {
       body: Center(
         child: Column(
           children: [
+            _isFirebaseInitialized
+                ? Container()
+                : AlertDialog(
+                    title: Text('Error'),
+                    content: Text('Error connecting to Firebase'),
+                    actions: [
+                      TextButton(
+                        onPressed: () {
+                          Navigator.pop(context);
+                        },
+                        child: Text('OK'),
+                      ),
+                    ],
+                  ),
             SizedBox(height: 20.0),
             HeaderContent(),
             BarStatusSampah(),
@@ -142,7 +189,8 @@ class _HeaderContentState extends State<HeaderContent> {
               SizedBox(width: 30),
               Hero(
                 tag: 'logo',
-                child: Image.asset('images/ecoflow_logo.png', width: 70, height: 70),
+                child: Image.asset('images/ecoflow_logo.png',
+                    width: 70, height: 70),
               ),
             ],
           ),
@@ -152,20 +200,75 @@ class _HeaderContentState extends State<HeaderContent> {
   }
 }
 
-class BarStatusSampah extends StatelessWidget {
+class BarStatusSampah extends StatefulWidget {
+  @override
+  _BarStatusSampahState createState() => _BarStatusSampahState();
+}
+
+class _BarStatusSampahState extends State<BarStatusSampah> {
+  final databaseReference = FirebaseDatabase.instance.ref('status_sampah');
+  double statusPenampungan = 0.0;
+  double statusJaring = 0.0;
+
+  @override
+  void initState() {
+    super.initState();
+    initFirebaseData();
+  }
+
+  void initFirebaseData() {
+    final firebaseApp = Firebase.app();
+    final rtdb = FirebaseDatabase.instanceFor(
+        app: firebaseApp,
+        databaseURL:
+            'https://ecoflow-11-7-default-rtdb.asia-southeast1.firebasedatabase.app/');
+    databaseReference.keepSynced(true);
+    DatabaseReference ref =
+        rtdb.ref().child('status_sampah').child('status_jaring');
+    Stream<DatabaseEvent> stream = ref.onValue;
+    stream.listen((DatabaseEvent event) {
+      var snapshot = event.snapshot;
+      if (snapshot.value != null) {
+        setState(() {
+          statusJaring = double.parse(snapshot.value.toString());
+          // print('status penampungan: $statusPenampungan');
+        });
+      }
+    });
+
+    // -----------------
+
+    DatabaseReference ref2 =
+        rtdb.ref().child('status_sampah').child('status_penampungan');
+    Stream<DatabaseEvent> stream2 = ref2.onValue;
+    stream2.listen((DatabaseEvent event) {
+      var snapshot = event.snapshot;
+
+      print('Jenis Event: ${event.type}');
+      print('Snapshot: ${event.snapshot}');
+      if (snapshot.value != null) {
+        setState(() {
+          statusPenampungan = double.parse(snapshot.value.toString());
+          // print('status penampungan: $statusPenampungan');
+        });
+      }
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
+    // Menyesuaikan tampilan berdasarkan nilai statusSampah
     double maxLoad = 4.0;
-    double load = 1.5;
-    double value = (load / maxLoad) * 100;
+    double value = (statusPenampungan / maxLoad) * 100;
 
     double maxCapacity = 1.8;
-    double Capacity = 1.1;
-    double valueCapacity = (Capacity / maxCapacity) * 100;
+    double valueCapacity = (statusJaring / maxCapacity) * 100;
 
     return Card(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16.0)),
-      margin: EdgeInsets.all(16.0),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16.0),
+      ),
+      margin: const EdgeInsets.all(16.0),
       elevation: 6,
       shadowColor: Colors.black.withOpacity(0.7),
       child: Container(
@@ -182,24 +285,63 @@ class BarStatusSampah extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 6.0),
+            StreamBuilder(
+              stream: databaseReference.child('status_sampah').onValue,
+              builder: (BuildContext context, AsyncSnapshot snapshot) {
+                if (snapshot.hasData && snapshot.data!.snapshot.value != null) {
+                  var statusPenampungan = snapshot.data!.snapshot.value;
+                  return Column(
+                    children: [
+                      Expanded(
+                        flex: 3,
+                        child: LinearProgressIndicator(
+                          value: value / 100,
+                          backgroundColor: const Color(0xFFD9D9D9),
+                          minHeight: 7.0,
+                          borderRadius: BorderRadius.circular(4.0),
+                          valueColor: AlwaysStoppedAnimation<Color>(
+                            getValueColor(value),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8.0),
+                      Expanded(
+                        flex: 1,
+                        child: Text(
+                          '${statusPenampungan.toStringAsFixed(1)} Kg / ${maxLoad.toStringAsFixed(1)} Kg',
+                          style: const TextStyle(
+                            fontSize: 11.0,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.black45,
+                          ),
+                        ),
+                      ),
+                    ],
+                  );
+                } else {
+                  return SizedBox(); // Jika tidak ada data, kembalikan widget kosong
+                }
+              },
+            ),
             Row(
               children: [
                 Expanded(
                   flex: 3,
                   child: LinearProgressIndicator(
                     value: value / 100,
-                    backgroundColor: Color(0xFFD9D9D9),
+                    backgroundColor: const Color(0xFFD9D9D9),
                     minHeight: 7.0,
                     borderRadius: BorderRadius.circular(4.0),
-                    valueColor:
-                        AlwaysStoppedAnimation<Color>(getValueColor(value)),
+                    valueColor: AlwaysStoppedAnimation<Color>(
+                      getValueColor(value),
+                    ),
                   ),
                 ),
-                SizedBox(width: 8.0),
+                const SizedBox(width: 8.0),
                 Expanded(
                   flex: 1,
                   child: Text(
-                    '${load.toStringAsFixed(0)} Kg / ${maxLoad.toStringAsFixed(0)} Kg',
+                    '${statusPenampungan.toStringAsFixed(1)} Kg / ${maxLoad.toStringAsFixed(1)} Kg',
                     style: const TextStyle(
                       fontSize: 11.0,
                       fontWeight: FontWeight.bold,
@@ -209,7 +351,7 @@ class BarStatusSampah extends StatelessWidget {
                 ),
               ],
             ),
-            SizedBox(height: 14.0),
+            const SizedBox(height: 14.0),
             const Text(
               'Status Jaring Sampah',
               style: TextStyle(
@@ -218,7 +360,7 @@ class BarStatusSampah extends StatelessWidget {
                 color: Colors.black87,
               ),
             ),
-            SizedBox(height: 6.0),
+            const SizedBox(height: 6.0),
             Row(
               children: [
                 Expanded(
@@ -226,17 +368,18 @@ class BarStatusSampah extends StatelessWidget {
                   child: LinearProgressIndicator(
                     value: valueCapacity / 100,
                     minHeight: 7.0,
-                    backgroundColor: Color(0xFFD9D9D9),
+                    backgroundColor: const Color(0xFFD9D9D9),
                     borderRadius: BorderRadius.circular(4.0),
                     valueColor: AlwaysStoppedAnimation<Color>(
-                        getValueColor(valueCapacity, isCapacity: true)),
+                      getValueColor(valueCapacity, isCapacity: true),
+                    ),
                   ),
                 ),
-                SizedBox(width: 8.0),
+                const SizedBox(width: 8.0),
                 Expanded(
                   flex: 1,
                   child: Text(
-                    '${valueCapacity.toStringAsFixed(0)} %',
+                    '${valueCapacity.toStringAsFixed(1)} %',
                     style: const TextStyle(
                       fontSize: 11.0,
                       fontWeight: FontWeight.bold,
@@ -246,7 +389,7 @@ class BarStatusSampah extends StatelessWidget {
                 ),
               ],
             ),
-            SizedBox(height: 6.0),
+            const SizedBox(height: 6.0),
           ],
         ),
       ),
@@ -262,17 +405,16 @@ class TampungSampahSekarang extends StatelessWidget {
 
     /// show the state of preparation first.
     pd.show(
-      max: 100,
-      msg: 'Menyiapkan...',
-      progressType: ProgressType.valuable,
-      backgroundColor: Colors.white,
-      progressValueColor: Color.fromARGB(255, 29, 47, 111),
-      progressBgColor: Colors.white12,
-      msgColor: Colors.black,
-      valueColor: Colors.black45,
-      barrierColor: Colors.black.withOpacity(0.7),
-      valueFontWeight: FontWeight.w600
-    );
+        max: 100,
+        msg: 'Menyiapkan...',
+        progressType: ProgressType.valuable,
+        backgroundColor: Colors.white,
+        progressValueColor: Color.fromARGB(255, 29, 47, 111),
+        progressBgColor: Colors.white12,
+        msgColor: Colors.black,
+        valueColor: Colors.black45,
+        barrierColor: Colors.black.withOpacity(0.7),
+        valueFontWeight: FontWeight.w600);
 
     /// Added to test late loading starts
     await Future.delayed(Duration(milliseconds: 3000));
