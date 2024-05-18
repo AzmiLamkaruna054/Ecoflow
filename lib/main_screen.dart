@@ -1,6 +1,7 @@
-import 'dart:ffi';
-
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:ecoflow/historyAngkat.dart';
 import 'package:firebase_database/firebase_database.dart';
+import 'firestore_service.dart';
 import 'package:flutter/material.dart';
 import 'notifikasi.dart';
 import 'dart:async';
@@ -34,10 +35,10 @@ class _MainScreenState extends State<MainScreen> {
       setState(() {
         _isFirebaseInitialized = true;
       });
-      print('Firebase connected successfully');
+      // print('Firebase connected successfully');
     } catch (e) {
       // Jika gagal terhubung, cetak pesan kesalahan
-      print('Error connecting to Firebase: $e');
+      // print('Error connecting to Firebase: $e');
     }
   }
 
@@ -84,29 +85,32 @@ class _MainScreenState extends State<MainScreen> {
           ),
         ],
       ),
-      body: Center(
-        child: Column(
-          children: [
-            _isFirebaseInitialized
-                ? Container()
-                : AlertDialog(
-                    title: Text('Error'),
-                    content: Text('Error connecting to Firebase'),
-                    actions: [
-                      TextButton(
-                        onPressed: () {
-                          Navigator.pop(context);
-                        },
-                        child: Text('OK'),
-                      ),
-                    ],
-                  ),
-            SizedBox(height: 20.0),
-            HeaderContent(),
-            BarStatusSampah(),
-            TampungSampahSekarang(),
-            Riwayat(),
-          ],
+      body: SingleChildScrollView(
+        child: Center(
+          child: Column(
+            children: [
+              _isFirebaseInitialized
+                  ? Container()
+                  : AlertDialog(
+                      title: Text('Error'),
+                      content: Text('Error connecting to Firebase'),
+                      actions: [
+                        TextButton(
+                          onPressed: () {
+                            Navigator.pop(context);
+                          },
+                          child: Text('OK'),
+                        ),
+                      ],
+                    ),
+              SizedBox(height: 20.0),
+              HeaderContent(),
+              BarStatusSampah(),
+              TampungSampahSekarang(),
+              RiwayatAngkat(),
+              Riwayat(),
+            ],
+          ),
         ),
       ),
     );
@@ -146,7 +150,7 @@ class _HeaderContentState extends State<HeaderContent> {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(16.0),
+      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
@@ -231,7 +235,7 @@ class _BarStatusSampahState extends State<BarStatusSampah> {
       if (snapshot.value != null) {
         setState(() {
           statusJaring = double.parse(snapshot.value.toString());
-          // print('status penampungan: $statusPenampungan');
+          print('status penampungan: $statusPenampungan');
         });
       }
     });
@@ -244,12 +248,12 @@ class _BarStatusSampahState extends State<BarStatusSampah> {
     stream2.listen((DatabaseEvent event) {
       var snapshot = event.snapshot;
 
-      print('Jenis Event: ${event.type}');
-      print('Snapshot: ${event.snapshot}');
+      // print('Jenis Event: ${event.type}');
+      // print('Snapshot: ${event.snapshot}');
       if (snapshot.value != null) {
         setState(() {
           statusPenampungan = double.parse(snapshot.value.toString());
-          // print('status penampungan: $statusPenampungan');
+          print('status penampungan: $statusPenampungan');
         });
       }
     });
@@ -308,7 +312,7 @@ class _BarStatusSampahState extends State<BarStatusSampah> {
                       Expanded(
                         flex: 1,
                         child: Text(
-                          '${statusPenampungan.toStringAsFixed(1)} Kg / ${maxLoad.toStringAsFixed(1)} Kg',
+                          '${statusPenampungan.toStringAsFixed(0)} Kg / 4 Kg',
                           style: const TextStyle(
                             fontSize: 11.0,
                             fontWeight: FontWeight.bold,
@@ -397,14 +401,31 @@ class _BarStatusSampahState extends State<BarStatusSampah> {
   }
 }
 
-class TampungSampahSekarang extends StatelessWidget {
-  const TampungSampahSekarang({Key? key});
+class TampungSampahSekarang extends StatefulWidget {
+  final VoidCallback? onLiftingCompleted;
 
-  _customProgress(BuildContext context) async {
+  const TampungSampahSekarang({Key? key, this.onLiftingCompleted})
+      : super(key: key);
+
+  @override
+  State<TampungSampahSekarang> createState() => _TampungSampahSekarangState();
+}
+
+class _TampungSampahSekarangState extends State<TampungSampahSekarang> {
+  final FirestoreService _firestoreService = FirestoreService();
+
+  void _customProgress(BuildContext context) async {
     ProgressDialog pd = ProgressDialog(context: context);
 
-    /// show the state of preparation first.
-    pd.show(
+    try {
+      // Ambil data status penampungan sebelum proses angkat sampah dimulai
+      double statusPenampunganSebelum = await _getStatusPenampungan();
+
+      // Set 'angkat' value to true in Firebase when the lifting process starts
+      await FirebaseDatabase.instance.ref('angkat').set("ON");
+
+      // Show progress dialog
+      pd.show(
         max: 100,
         msg: 'Menyiapkan...',
         progressType: ProgressType.valuable,
@@ -414,22 +435,72 @@ class TampungSampahSekarang extends StatelessWidget {
         msgColor: Colors.black,
         valueColor: Colors.black45,
         barrierColor: Colors.black.withOpacity(0.7),
-        valueFontWeight: FontWeight.w600);
+      );
 
-    /// Added to test late loading starts
-    await Future.delayed(Duration(milliseconds: 3000));
-    for (int i = 0; i <= 100; i++) {
-      /// You can indicate here that the download has started.
-      pd.update(value: i, msg: 'Mengangkat Sampah...');
-      i++;
-      await Future.delayed(Duration(milliseconds: 100));
+      // Simulate lifting process delay
+      await Future.delayed(Duration(milliseconds: 1000));
+
+      for (int i = 0; i <= 100; i++) {
+        pd.update(value: i, msg: 'Mengangkat sampah...');
+        i++;
+        await Future.delayed(Duration(milliseconds: 100));
+      }
+
+      pd.close();
+
+      // Set 'angkat' value back to false when the lifting process finishes
+      await Future.delayed(Duration(milliseconds: 500));
+      await FirebaseDatabase.instance.ref('angkat').set("OFF");
+
+      // Ambil data status penampungan setelah proses angkat sampah selesai
+      double statusPenampunganSesudah = await _getStatusPenampungan();
+
+      // Hitung berat sampah yang diangkat
+      double beratSampah = double.parse(
+          (statusPenampunganSesudah - statusPenampunganSebelum)
+              .toStringAsFixed(1));
+
+      // Save lifting status and timestamp to Firestore
+      await _saveToFirestore(beratSampah);
+
+      // Show success dialog
+      DInfo.dialogSuccess(context, 'Sampah berhasil diangkat!');
+      DInfo.closeDialog(context,
+          durationBeforeClose: const Duration(seconds: 2));
+
+      // Setelah proses pengangkatan sampah selesai
+      widget.onLiftingCompleted?.call();
+    } catch (e) {
+      // print('Error in _customProgress: $e');
     }
+  }
 
-    pd.close();
+  Future<double> _getStatusPenampungan() async {
+    DatabaseReference reference = FirebaseDatabase.instance
+        .ref()
+        .child('status_sampah')
+        .child('status_penampungan');
 
-    // Show success dialog
-    DInfo.dialogSuccess(context, 'Sampah berhasil diangkat');
-    DInfo.closeDialog(context, durationBeforeClose: const Duration(seconds: 2));
+    try {
+      DataSnapshot snapshot = (await reference.once()).snapshot;
+
+      if (snapshot.value != null) {
+        // Convert the snapshot value to a double type before returning
+        return double.parse(snapshot.value.toString());
+      } else {
+        throw Exception('Snapshot does not have a value');
+      }
+    } catch (e) {
+      // print('Error in _getStatusPenampungan: $e');
+      throw Exception('Failed to get status penampungan');
+    }
+  }
+
+  Future<void> _saveToFirestore(double beratSampah) async {
+    // Simpan berat sampah ke Firestore
+    await _firestoreService.addHistoryAngkat(beratSampah.toString());
+
+    // print('Data saved to Firestore: Berat Sampah: $beratSampah');
   }
 
   @override
@@ -449,7 +520,7 @@ class TampungSampahSekarang extends StatelessWidget {
               children: [
                 Icon(
                   Icons.delete,
-                  color: Colors.black45,
+                  color: const Color.fromRGBO(0, 0, 0, 0.451),
                   size: 30.0,
                 ),
                 SizedBox(height: 15),
@@ -468,10 +539,10 @@ class TampungSampahSekarang extends StatelessWidget {
                   'Apakah anda yakin ingin mengambil sampah?',
                 );
                 if (isYes ?? false) {
-                  // print('user click yes');
+                  print('user click yes');
                   _customProgress(context);
                 } else {
-                  // print('user click no');
+                  print('user click no');
                 }
               },
               child: Card(
@@ -500,26 +571,251 @@ class TampungSampahSekarang extends StatelessWidget {
   }
 }
 
-class Riwayat extends StatelessWidget {
-  const Riwayat({Key? key}) : super(key: key);
+class RiwayatAngkat extends StatefulWidget {
+  RiwayatAngkat({Key? key}) : super(key: key);
 
-  // Data riwayat
-  static const List<Map<String, dynamic>> Data = [
-    {'tanggal': 'Kamis 21/03/2024', 'berat': '1.5 Kg'},
-    {'tanggal': 'Rabu 20/03/2024', 'berat': '2.0 Kg'},
-    {'tanggal': 'Kamis 21/03/2024', 'berat': '1.5 Kg'},
-    {'tanggal': 'Rabu 20/03/2024', 'berat': '2.0 Kg'},
-    {'tanggal': 'Kamis 21/03/2024', 'berat': '1.5 Kg'},
-    {'tanggal': 'Rabu 20/03/2024', 'berat': '2.0 Kg'},
-    {'tanggal': 'Kamis 21/03/2024', 'berat': '1.5 Kg'},
-    {'tanggal': 'Rabu 20/03/2024', 'berat': '2.0 Kg'},
-    {'tanggal': 'Kamis 21/03/2024', 'berat': '1.5 Kg'},
-    {'tanggal': 'Rabu 20/03/2024', 'berat': '2.0 Kg'},
-  ];
+  @override
+  _RiwayatAngkatState createState() => _RiwayatAngkatState();
+}
+
+class _RiwayatAngkatState extends State<RiwayatAngkat> {
+  List<Map<String, dynamic>> historyAngkatData = []; // Menyimpan data riwayat
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchHistoryAngkatData();
+  }
+
+  Future<void> _fetchHistoryAngkatData() async {
+    try {
+      final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+      QuerySnapshot querySnapshot = await _firestore
+          .collection('riwayatAngkat')
+          .orderBy('waktu',
+              descending:
+                  true) // Sorting berdasarkan 'tanggal' dengan descending true
+          .get();
+
+      List<Map<String, dynamic>> fetchedData = [];
+
+      querySnapshot.docs.forEach((doc) {
+        Timestamp timestamp = doc['waktu'];
+        DateTime dateTime = timestamp.toDate();
+        String formattedDate =
+            DateFormat('EEEE dd/MM/yyyy', 'id_ID').format(dateTime);
+        String formattedTime = DateFormat('HH:mm').format(dateTime);
+        fetchedData.add({
+          'tanggal': formattedDate,
+          'waktu': formattedTime,
+          'berat': doc['berat'].toString(),
+        });
+      });
+
+      setState(() {
+        historyAngkatData = fetchedData;
+      });
+    } catch (e) {
+      // print('Error fetching history: $e');
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    final List<Map<String, dynamic>> limitedData = Data.take(2).toList();
+    final List<Map<String, dynamic>> limitedData =
+        historyAngkatData.isNotEmpty ? historyAngkatData.take(2).toList() : [];
+
+    return Container(
+      padding: const EdgeInsets.all(16.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'Riwayat angkat sampah',
+                style: TextStyle(
+                  fontSize: 16.0,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              Icon(
+                Icons.history,
+              ),
+            ],
+          ),
+          SizedBox(height: 16.0),
+          _buildTableHeader(),
+          SizedBox(height: 8.0),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: limitedData.map((item) {
+              return _buildDataRow(
+                  item['tanggal'], item['waktu'], item['berat']);
+            }).toList(),
+          ),
+          SizedBox(height: 8.0),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              Card(
+                elevation: 3,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(5.0),
+                ),
+                child: InkWell(
+                  onTap: _navigateToHistoryAngkatPage,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                        vertical: 4.0, horizontal: 8.0),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          'Lihat Semua',
+                          style: TextStyle(
+                            fontSize: 8.0,
+                          ),
+                        ),
+                        SizedBox(width: 3.0),
+                        Icon(
+                          Icons.arrow_forward_ios_rounded,
+                          size: 12.0,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTableHeader() {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(
+          'Hari/Tanggal',
+          style: TextStyle(
+            fontSize: 14.0,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        Text(
+          'Waktu',
+          style: TextStyle(
+            fontSize: 14.0,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        Text(
+          'Berat/Kg',
+          style: TextStyle(
+            fontSize: 14.0,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildDataRow(String date, String time, String weight) {
+    return Row(
+      children: [
+        Container(
+          width: 180,
+          child: Text(
+            date,
+            style: TextStyle(fontSize: 14.0),
+          ),
+        ),
+        Container(
+          width: 50,
+          child: Text(
+            time,
+            style: TextStyle(fontSize: 14.0),
+            textAlign: TextAlign.center,
+          ),
+        ),
+        Expanded(
+          child: Text(
+            weight,
+            style: TextStyle(fontSize: 14.0),
+            textAlign: TextAlign.end,
+          ),
+        ),
+      ],
+    );
+  }
+
+  void _navigateToHistoryAngkatPage() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+          builder: (context) => HistoryAngkatPage(data: historyAngkatData)),
+    ).then((_) {
+      // Panggil _fetchHistoryAngkatData setelah kembali dari halaman histori
+      _fetchHistoryAngkatData();
+    });
+  }
+}
+
+class Riwayat extends StatefulWidget {
+  Riwayat({Key? key}) : super(key: key);
+
+  @override
+  _RiwayatState createState() => _RiwayatState();
+}
+
+class _RiwayatState extends State<Riwayat> {
+  List<Map<String, dynamic>> historyData = []; // Menyimpan data riwayat
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchHistoryData();
+  }
+
+  Future<void> _fetchHistoryData() async {
+    try {
+      final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+      QuerySnapshot querySnapshot = await _firestore
+          .collection('riwayat')
+          .orderBy('tanggal',
+              descending:
+                  true) // Sorting berdasarkan 'tanggal' dengan descending true
+          .get();
+
+      List<Map<String, dynamic>> fetchedData = [];
+
+      querySnapshot.docs.forEach((doc) {
+        Timestamp timestamp = doc['tanggal'];
+        DateTime dateTime = timestamp.toDate();
+        String formattedDate =
+            DateFormat('EEEE dd/MM/yyyy', 'id_ID').format(dateTime);
+        fetchedData.add({
+          'tanggal': formattedDate,
+          'berat': doc['berat'].toString(),
+        });
+      });
+
+      setState(() {
+        historyData = fetchedData;
+      });
+    } catch (e) {
+      // print('Error fetching history: $e');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final List<Map<String, dynamic>> limitedData =
+        historyData.isNotEmpty ? historyData.take(2).toList() : [];
 
     return Container(
       padding: const EdgeInsets.all(16.0),
@@ -560,14 +856,7 @@ class Riwayat extends StatelessWidget {
                   borderRadius: BorderRadius.circular(5.0),
                 ),
                 child: InkWell(
-                  onTap: () {
-                    print("lihat Semua");
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                          builder: (context) => HistoryPage(data: Data)),
-                    );
-                  },
+                  onTap: _navigateToHistoryPage,
                   child: Padding(
                     padding: const EdgeInsets.symmetric(
                         vertical: 4.0, horizontal: 8.0),
@@ -633,6 +922,16 @@ class Riwayat extends StatelessWidget {
         ),
       ],
     );
+  }
+
+  void _navigateToHistoryPage() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (context) => HistoryPage(data: historyData)),
+    ).then((_) {
+      // Panggil _fetchHistoryData setelah kembali dari halaman histori
+      _fetchHistoryData();
+    });
   }
 }
 
