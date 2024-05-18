@@ -29,7 +29,7 @@ class _LandingPageState extends State<LandingPage> {
                   ),
                   SizedBox(height: 20),
                   Text(
-                    'Welcome to EcoFlow, your sustainable lifestyle companion!',
+                    'Selamat Datang di EcoFlow!',
                     style: TextStyle(
                       color: Colors.white,
                       fontSize: 18,
@@ -52,7 +52,7 @@ class _LandingPageState extends State<LandingPage> {
                                   builder: (context) => MainScreen()));
                         },
                         child: Text(
-                          'Get Started',
+                          'Mulai',
                           style: TextStyle(
                               fontWeight: FontWeight.normal,
                               color: Colors.black),
