@@ -1,11 +1,11 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:ecoflow/historyAngkat.dart';
 import 'package:firebase_database/firebase_database.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'firestore_service.dart';
 import 'package:flutter/material.dart';
 import 'notifikasi.dart';
 import 'dart:async';
-import 'history.dart';
 import 'package:intl/intl.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:d_info/d_info.dart';
@@ -25,6 +25,21 @@ class _MainScreenState extends State<MainScreen> {
     super.initState();
     // Panggil fungsi untuk memeriksa koneksi Firebase saat widget diinisialisasi
     _checkFirebaseConnection();
+    _requestNotificationPermission();
+  }
+
+  Future<void> _requestNotificationPermission() async {
+    PermissionStatus status = await Permission.notification.status;
+    if (!status.isGranted) {
+      status = await Permission.notification.request();
+      if (status.isGranted) {
+        print("Notification permission granted");
+      } else if (status.isDenied) {
+        print("Notification permission denied");
+      } else if (status.isPermanentlyDenied) {
+        openAppSettings();
+      }
+    }
   }
 
   Future<void> _checkFirebaseConnection() async {
@@ -53,21 +68,15 @@ class _MainScreenState extends State<MainScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        backgroundColor: const Color(0xFF041D31),
+        backgroundColor: Color(0xFF041D31),
+        title: HeaderContent(),
         automaticallyImplyLeading: false,
+        toolbarHeight: 120.0,
         shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.only(
             bottomLeft: Radius.circular(25),
             bottomRight: Radius.circular(25),
           ),
-        ),
-        title: const Padding(
-          padding: EdgeInsets.only(left: 16.0),
-          child: Text('EcoFlow',
-              style: TextStyle(
-                  fontWeight: FontWeight.w500,
-                  fontSize: 20.0,
-                  color: Colors.white)),
         ),
         actions: [
           IconButton(
@@ -103,12 +112,12 @@ class _MainScreenState extends State<MainScreen> {
                         ),
                       ],
                     ),
-              SizedBox(height: 20.0),
-              HeaderContent(),
+              SizedBox(height: 12.0),
               BarStatusSampah(),
               TampungSampahSekarang(),
               RiwayatAngkat(),
-              Riwayat(),
+              // Riwayat(),
+              SizedBox(height: 10.0),
             ],
           ),
         ),
@@ -161,9 +170,19 @@ class _HeaderContentState extends State<HeaderContent> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Hii,\nSelamat datang di aplikasi EcoFlow',
+                      'Hai,\nSelamat datang di aplikasi',
                       style: TextStyle(
-                          fontSize: 14.0, fontWeight: FontWeight.w600),
+                          fontSize: 14.0,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.white),
+                    ),
+
+                    Text(
+                      'EcoFlow',
+                      style: TextStyle(
+                          fontSize: 24.0,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white),
                     ),
                     SizedBox(
                         height: 8), // Tambahkan jarak antara teks dan tanggal
@@ -177,24 +196,23 @@ class _HeaderContentState extends State<HeaderContent> {
                           return Text(
                             formattedDate,
                             style: TextStyle(
-                                fontSize: 12.0, fontWeight: FontWeight.w600),
+                                fontSize: 12.0,
+                                fontWeight: FontWeight.w600,
+                                color: Colors.white),
                           );
                         } else {
                           return Text(
                               '.........................................................',
                               style: TextStyle(
-                                  fontSize: 12.0, fontWeight: FontWeight.w600));
+                                  fontSize: 12.0,
+                                  fontWeight: FontWeight.w600,
+                                  color: Colors.white));
                         }
                       },
                     ),
+                    SizedBox(height: 10),
                   ],
                 ),
-              ),
-              SizedBox(width: 30),
-              Hero(
-                tag: 'logo',
-                child: Image.asset('images/ecoflow_logo.png',
-                    width: 70, height: 70),
               ),
             ],
           ),
@@ -213,6 +231,8 @@ class _BarStatusSampahState extends State<BarStatusSampah> {
   final databaseReference = FirebaseDatabase.instance.ref('status_sampah');
   double statusPenampungan = 0.0;
   double statusJaring = 0.0;
+  bool _isNotificationSent = false;
+  Timer? _debounce;
 
   @override
   void initState() {
@@ -227,6 +247,7 @@ class _BarStatusSampahState extends State<BarStatusSampah> {
         databaseURL:
             'https://ecoflow-11-7-default-rtdb.asia-southeast1.firebasedatabase.app/');
     databaseReference.keepSynced(true);
+
     DatabaseReference ref =
         rtdb.ref().child('status_sampah').child('status_jaring');
     Stream<DatabaseEvent> stream = ref.onValue;
@@ -235,37 +256,76 @@ class _BarStatusSampahState extends State<BarStatusSampah> {
       if (snapshot.value != null) {
         setState(() {
           statusJaring = double.parse(snapshot.value.toString());
-          print('status penampungan: $statusPenampungan');
         });
       }
     });
-
-    // -----------------
 
     DatabaseReference ref2 =
         rtdb.ref().child('status_sampah').child('status_penampungan');
     Stream<DatabaseEvent> stream2 = ref2.onValue;
     stream2.listen((DatabaseEvent event) {
       var snapshot = event.snapshot;
-
-      // print('Jenis Event: ${event.type}');
-      // print('Snapshot: ${event.snapshot}');
       if (snapshot.value != null) {
-        setState(() {
-          statusPenampungan = double.parse(snapshot.value.toString());
-          print('status penampungan: $statusPenampungan');
+        if (_debounce?.isActive ?? false) _debounce?.cancel();
+        _debounce = Timer(const Duration(seconds: 2), () {
+          setState(() {
+            statusPenampungan = double.parse(snapshot.value.toString());
+            checkPenampunganStatus();
+          });
         });
       }
     });
   }
 
+void checkPenampunganStatus() async {
+  double maxLoad = 4.0;
+  double warningLoad = 2.0;
+  bool shouldSendNotification = false;
+  String title = '';
+  String description = '';
+  String level = '';
+
+  if (statusPenampungan >= maxLoad && !_isNotificationSent) {
+    shouldSendNotification = true;
+    title = 'Penampungan Sampah Penuh';
+    description = 'Penampungan sampah telah mencapai kapasitas maksimal.';
+    level = 'danger';
+  } else if (statusPenampungan >= warningLoad &&
+      statusPenampungan < maxLoad &&
+      !_isNotificationSent) {
+    shouldSendNotification = true;
+    title = 'Penampungan Sampah Hampir Penuh';
+    description = 'Penampungan sampah hampir mencapai kapasitas maksimal.';
+    level = 'warning';
+  }
+
+  if (shouldSendNotification) {
+    _isNotificationSent = true;
+    try {
+      await FirebaseFirestore.instance.collection('notifikasi').add({
+        'judul': title,
+        'deskripsi': description,
+        'level': level,
+        'waktu': Timestamp.now(),
+      });
+      print('Notifikasi baru telah ditambahkan ke Firestore.');
+    } catch (e) {
+      print('Error saat menambahkan notifikasi ke Firestore: $e');
+    }
+  } else if (statusPenampungan < warningLoad) {
+    _isNotificationSent = false;
+  }
+}
+
   @override
   Widget build(BuildContext context) {
-    // Menyesuaikan tampilan berdasarkan nilai statusSampah
     double maxLoad = 4.0;
     double value = (statusPenampungan / maxLoad) * 100;
 
     double maxCapacity = 1.8;
+    if (statusJaring > 1.8) {
+      statusJaring = 1.8;
+    }
     double valueCapacity = (statusJaring / maxCapacity) * 100;
 
     return Card(
@@ -289,53 +349,15 @@ class _BarStatusSampahState extends State<BarStatusSampah> {
               ),
             ),
             const SizedBox(height: 6.0),
-            StreamBuilder(
-              stream: databaseReference.child('status_sampah').onValue,
-              builder: (BuildContext context, AsyncSnapshot snapshot) {
-                if (snapshot.hasData && snapshot.data!.snapshot.value != null) {
-                  var statusPenampungan = snapshot.data!.snapshot.value;
-                  return Column(
-                    children: [
-                      Expanded(
-                        flex: 3,
-                        child: LinearProgressIndicator(
-                          value: value / 100,
-                          backgroundColor: const Color(0xFFD9D9D9),
-                          minHeight: 7.0,
-                          borderRadius: BorderRadius.circular(4.0),
-                          valueColor: AlwaysStoppedAnimation<Color>(
-                            getValueColor(value),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 8.0),
-                      Expanded(
-                        flex: 1,
-                        child: Text(
-                          '${statusPenampungan.toStringAsFixed(0)} Kg / 4 Kg',
-                          style: const TextStyle(
-                            fontSize: 11.0,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.black45,
-                          ),
-                        ),
-                      ),
-                    ],
-                  );
-                } else {
-                  return SizedBox(); // Jika tidak ada data, kembalikan widget kosong
-                }
-              },
-            ),
             Row(
               children: [
                 Expanded(
                   flex: 3,
                   child: LinearProgressIndicator(
+                    borderRadius: BorderRadius.circular(8.0),
                     value: value / 100,
                     backgroundColor: const Color(0xFFD9D9D9),
                     minHeight: 7.0,
-                    borderRadius: BorderRadius.circular(4.0),
                     valueColor: AlwaysStoppedAnimation<Color>(
                       getValueColor(value),
                     ),
@@ -370,10 +392,10 @@ class _BarStatusSampahState extends State<BarStatusSampah> {
                 Expanded(
                   flex: 3,
                   child: LinearProgressIndicator(
+                    borderRadius: BorderRadius.circular(8.0),
                     value: valueCapacity / 100,
                     minHeight: 7.0,
                     backgroundColor: const Color(0xFFD9D9D9),
-                    borderRadius: BorderRadius.circular(4.0),
                     valueColor: AlwaysStoppedAnimation<Color>(
                       getValueColor(valueCapacity, isCapacity: true),
                     ),
@@ -460,13 +482,25 @@ class _TampungSampahSekarangState extends State<TampungSampahSekarang> {
           (statusPenampunganSesudah - statusPenampunganSebelum)
               .toStringAsFixed(1));
 
+      // Show success dialog
+      DInfo.dialogSuccess(
+          context, 'Sampah berhasil diangkat!\nHistori akan disimpan...');
+      DInfo.closeDialog(context,
+          durationBeforeClose: const Duration(seconds: 2));
+
+      // Wait for 10 seconds before saving to Firestore
+      await Future.delayed(Duration(seconds: 10));
+
       // Save lifting status and timestamp to Firestore
       await _saveToFirestore(beratSampah);
 
-      // Show success dialog
-      DInfo.dialogSuccess(context, 'Sampah berhasil diangkat!');
-      DInfo.closeDialog(context,
-          durationBeforeClose: const Duration(seconds: 2));
+      // Show success snackbar
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Histori berhasil disimpan'),
+          duration: Duration(seconds: 3),
+        ),
+      );
 
       // Setelah proses pengangkatan sampah selesai
       widget.onLiftingCompleted?.call();
@@ -506,29 +540,28 @@ class _TampungSampahSekarangState extends State<TampungSampahSekarang> {
   @override
   Widget build(BuildContext context) {
     return Card(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16.0)),
-      margin: EdgeInsets.all(16.0),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20.0)),
+      color: const Color.fromRGBO(4, 29, 49, 1),
+      margin: EdgeInsets.all(30.0),
       elevation: 6,
-      shadowColor: Colors.black.withOpacity(0.7),
+      shadowColor: Color.fromARGB(255, 0, 0, 0).withOpacity(0.7),
       child: Container(
-        padding: const EdgeInsets.all(16.0),
+        width: 250,
+        padding: const EdgeInsets.all(10.0),
         child: Row(
           mainAxisAlignment: MainAxisAlignment.spaceAround,
           children: [
             Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Icon(
-                  Icons.delete,
-                  color: const Color.fromRGBO(0, 0, 0, 0.451),
-                  size: 30.0,
-                ),
-                SizedBox(height: 15),
-                Text(
-                  'Tampung Sampah Sekarang',
-                  style: TextStyle(fontSize: 12.0, fontWeight: FontWeight.bold),
-                ),
-                SizedBox(height: 8.0),
+                SizedBox(height: 12),
+                Text('Tampung Sampah',
+                    style: TextStyle(
+                      fontSize: 14.0,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                    )),
+                SizedBox(height: 12),
               ],
             ),
             GestureDetector(
@@ -551,13 +584,13 @@ class _TampungSampahSekarangState extends State<TampungSampahSekarang> {
                 ),
                 margin: EdgeInsets.all(0),
                 child: SizedBox(
-                  width: 84,
-                  height: 60,
+                  width: 50,
+                  height: 35,
                   child: Center(
                     child: Icon(
                       // Icons.power_settings_new_rounded,
                       Icons.power_settings_new_sharp,
-                      color: Colors.red,
+                      color: const Color.fromARGB(255, 0, 0, 0),
                       size: 30,
                     ),
                   ),
@@ -623,10 +656,27 @@ class _RiwayatAngkatState extends State<RiwayatAngkat> {
   @override
   Widget build(BuildContext context) {
     final List<Map<String, dynamic>> limitedData =
-        historyAngkatData.isNotEmpty ? historyAngkatData.take(2).toList() : [];
+        historyAngkatData.isNotEmpty ? historyAngkatData.take(3).toList() : [];
 
     return Container(
-      padding: const EdgeInsets.all(16.0),
+      padding: const EdgeInsets.only(
+        left: 15.0,
+        top: 10.0,
+        right: 15.0,
+        bottom: 60.0,
+      ),
+      decoration: BoxDecoration(
+        color: Colors.white, // Warna latar belakang
+        borderRadius: BorderRadius.circular(25.0), // Radius border
+        boxShadow: [
+          BoxShadow(
+            color: Colors.grey.withOpacity(1), // Warna bayangan
+            spreadRadius: 2, // Radius penyebaran
+            blurRadius: 5, // Radius blur
+            offset: Offset(0, 3), // Offset bayangan (x, y)
+          ),
+        ],
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -634,20 +684,36 @@ class _RiwayatAngkatState extends State<RiwayatAngkat> {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text(
-                'Riwayat angkat sampah',
+                'Riwayat',
                 style: TextStyle(
                   fontSize: 16.0,
                   fontWeight: FontWeight.bold,
                 ),
               ),
-              Icon(
-                Icons.history,
+              TextButton(
+                onPressed: () {
+                  _navigateToHistoryAngkatPage();
+                },
+                child: Row(
+                  children: [
+                    Text(
+                      'Lihat Semua',
+                      style: TextStyle(
+                        color: Colors.black,
+                        fontSize: 14.0,
+                      ),
+                    ),
+                    SizedBox(width: 0.0), // Jarak antara teks dan ikon
+                    Icon(
+                      Icons.arrow_forward_ios_rounded,
+                      size: 16.0,
+                      color: Colors.black,
+                    ),
+                  ],
+                ),
               ),
             ],
           ),
-          SizedBox(height: 16.0),
-          _buildTableHeader(),
-          SizedBox(height: 8.0),
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: limitedData.map((item) {
@@ -655,101 +721,100 @@ class _RiwayatAngkatState extends State<RiwayatAngkat> {
                   item['tanggal'], item['waktu'], item['berat']);
             }).toList(),
           ),
-          SizedBox(height: 8.0),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.end,
-            children: [
-              Card(
-                elevation: 3,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(5.0),
-                ),
-                child: InkWell(
-                  onTap: _navigateToHistoryAngkatPage,
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                        vertical: 4.0, horizontal: 8.0),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          'Lihat Semua',
-                          style: TextStyle(
-                            fontSize: 8.0,
-                          ),
-                        ),
-                        SizedBox(width: 3.0),
-                        Icon(
-                          Icons.arrow_forward_ios_rounded,
-                          size: 12.0,
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
         ],
       ),
     );
   }
 
-  Widget _buildTableHeader() {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [
-        Text(
-          'Hari/Tanggal',
-          style: TextStyle(
-            fontSize: 14.0,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        Text(
-          'Waktu',
-          style: TextStyle(
-            fontSize: 14.0,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        Text(
-          'Berat/Kg',
-          style: TextStyle(
-            fontSize: 14.0,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-      ],
-    );
-  }
-
   Widget _buildDataRow(String date, String time, String weight) {
-    return Row(
-      children: [
-        Container(
-          width: 180,
-          child: Text(
-            date,
-            style: TextStyle(fontSize: 14.0),
-          ),
+    return Card(
+      elevation: 3,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(15.0),
+      ),
+      color: Color(0xFF687E95), // Background color of the card
+      child: Padding(
+        padding: const EdgeInsets.all(10.0),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Container(
+              width: 130,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Tanggal',
+                    style: TextStyle(
+                      fontSize: 12.0,
+                      fontWeight: FontWeight.bold,
+                      color: Color(0xFFD9D9D9),
+                    ),
+                  ),
+                  SizedBox(height: 3),
+                  Text(
+                    date,
+                    style: TextStyle(
+                      fontSize: 14.0,
+                      color: Colors.white, // Set text color to white
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Container(
+              width: 60,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Text(
+                    'Waktu',
+                    style: TextStyle(
+                      fontSize: 12.0,
+                      fontWeight: FontWeight.bold,
+                      color: Color(0xFFD9D9D9),
+                    ),
+                  ),
+                  SizedBox(height: 4),
+                  Text(
+                    time,
+                    style: TextStyle(
+                      fontSize: 14.0,
+                      color: Colors.white, // Set text color to white
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                ],
+              ),
+            ),
+            Container(
+              width: 60,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(
+                    'Berat',
+                    style: TextStyle(
+                      fontSize: 12.0,
+                      fontWeight: FontWeight.bold,
+                      color: Color(0xFFD9D9D9),
+                    ),
+                  ),
+                  SizedBox(height: 4),
+                  Text(
+                    '$weight kg',
+                    style: TextStyle(
+                      fontSize: 14.0,
+                      color: Colors.white, // Set text color to white
+                    ),
+                    textAlign: TextAlign.end,
+                  ),
+                ],
+              ),
+            ),
+          ],
         ),
-        Container(
-          width: 50,
-          child: Text(
-            time,
-            style: TextStyle(fontSize: 14.0),
-            textAlign: TextAlign.center,
-          ),
-        ),
-        Expanded(
-          child: Text(
-            weight,
-            style: TextStyle(fontSize: 14.0),
-            textAlign: TextAlign.end,
-          ),
-        ),
-      ],
+      ),
     );
   }
 
@@ -761,176 +826,6 @@ class _RiwayatAngkatState extends State<RiwayatAngkat> {
     ).then((_) {
       // Panggil _fetchHistoryAngkatData setelah kembali dari halaman histori
       _fetchHistoryAngkatData();
-    });
-  }
-}
-
-class Riwayat extends StatefulWidget {
-  Riwayat({Key? key}) : super(key: key);
-
-  @override
-  _RiwayatState createState() => _RiwayatState();
-}
-
-class _RiwayatState extends State<Riwayat> {
-  List<Map<String, dynamic>> historyData = []; // Menyimpan data riwayat
-
-  @override
-  void initState() {
-    super.initState();
-    _fetchHistoryData();
-  }
-
-  Future<void> _fetchHistoryData() async {
-    try {
-      final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-      QuerySnapshot querySnapshot = await _firestore
-          .collection('riwayat')
-          .orderBy('tanggal',
-              descending:
-                  true) // Sorting berdasarkan 'tanggal' dengan descending true
-          .get();
-
-      List<Map<String, dynamic>> fetchedData = [];
-
-      querySnapshot.docs.forEach((doc) {
-        Timestamp timestamp = doc['tanggal'];
-        DateTime dateTime = timestamp.toDate();
-        String formattedDate =
-            DateFormat('EEEE dd/MM/yyyy', 'id_ID').format(dateTime);
-        fetchedData.add({
-          'tanggal': formattedDate,
-          'berat': doc['berat'].toString(),
-        });
-      });
-
-      setState(() {
-        historyData = fetchedData;
-      });
-    } catch (e) {
-      // print('Error fetching history: $e');
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final List<Map<String, dynamic>> limitedData =
-        historyData.isNotEmpty ? historyData.take(2).toList() : [];
-
-    return Container(
-      padding: const EdgeInsets.all(16.0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                'Riwayat buang sampah',
-                style: TextStyle(
-                  fontSize: 16.0,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              Icon(
-                Icons.history,
-              ),
-            ],
-          ),
-          SizedBox(height: 16.0),
-          _buildTableHeader(),
-          SizedBox(height: 8.0),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: limitedData.map((item) {
-              return _buildDataRow(item['tanggal'], item['berat']);
-            }).toList(),
-          ),
-          SizedBox(height: 8.0),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.end,
-            children: [
-              Card(
-                elevation: 3,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(5.0),
-                ),
-                child: InkWell(
-                  onTap: _navigateToHistoryPage,
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                        vertical: 4.0, horizontal: 8.0),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          'Lihat Semua',
-                          style: TextStyle(
-                            fontSize: 8.0,
-                          ),
-                        ),
-                        SizedBox(width: 3.0),
-                        Icon(
-                          Icons.arrow_forward_ios_rounded,
-                          size: 12.0,
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildTableHeader() {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [
-        Text(
-          'Hari/Tanggal',
-          style: TextStyle(
-            fontSize: 14.0,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        Text(
-          'Jumlah/Kg',
-          style: TextStyle(
-            fontSize: 14.0,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildDataRow(String date, String weight) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [
-        Text(
-          date,
-          style: TextStyle(fontSize: 14.0),
-        ),
-        Text(
-          weight,
-          style: TextStyle(fontSize: 14.0),
-        ),
-      ],
-    );
-  }
-
-  void _navigateToHistoryPage() {
-    Navigator.push(
-      context,
-      MaterialPageRoute(builder: (context) => HistoryPage(data: historyData)),
-    ).then((_) {
-      // Panggil _fetchHistoryData setelah kembali dari halaman histori
-      _fetchHistoryData();
     });
   }
 }
